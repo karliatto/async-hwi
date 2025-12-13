@@ -1,20 +1,4 @@
-//! # Examples
-//! ```no_run
-//! use async_hwi::trezor::TrezorClient;
-//! use async_hwi::HWI;
-//!
-//! #[tokio::main]
-//! pub async fn main() {
-//!     let mut hwi = TrezorClient::connect_first(false).unwrap();
-//!     hwi.set_network(bitcoin::Network::Bitcoin);
-//!     println!("{}", hwi.get_version().await.unwrap());
-//!     println!("{:?}", hwi.get_master_fingerprint().await);
-//!     let path =
-//!         <bitcoin::bip32::DerivationPath as std::str::FromStr>::from_str("m/44'/1'/0'/0/0")
-//!             .expect("Failed to parse path");
-//!     println!("{:?}", hwi.get_extended_pubkey(&path).await);
-//!}
-//!  ```
+use crate::{AddressScript, DeviceKind, Error as HWIError, HWI};
 
 use std::{
     collections::HashMap,
@@ -24,14 +8,12 @@ use std::{
 
 use async_trait::async_trait;
 use bitcoin::{
-    bip32::{DerivationPath, ExtendedPubKey, Fingerprint},
+    bip32::{DerivationPath, Xpub, Fingerprint},
     ecdsa,
     psbt::Psbt,
     PublicKey,
 };
 use trezor_client::{Trezor, TrezorResponse};
-
-use crate::{DeviceKind, Error, HWI};
 
 pub struct TrezorClient {
     client: Arc<Mutex<Trezor>>,
@@ -66,14 +48,14 @@ impl TrezorClient {
         }
     }
 
-    pub fn connect_first(debug: bool) -> Result<Self, Error> {
+    pub fn connect_first(debug: bool) -> Result<Self, HWIError> {
         let mut devices = trezor_client::find_devices(debug);
         if !devices.is_empty() {
             let mut client = devices.remove(0).connect()?;
             client.init_device(None)?;
             Ok(Self::new(client))
         } else {
-            Err(Error::DeviceNotFound)
+            Err(HWIError::DeviceNotFound)
         }
     }
 
@@ -105,7 +87,7 @@ impl HWI for TrezorClient {
         self.kind
     }
 
-    async fn get_version(&self) -> Result<super::Version, Error> {
+    async fn get_version(&self) -> Result<super::Version, HWIError> {
         let client = self.client.lock().unwrap();
         let f = client.features();
         if let Some(f) = f {
@@ -117,18 +99,11 @@ impl HWI for TrezorClient {
             };
             Ok(version)
         } else {
-            return Err(Error::Device(String::from("No features found")));
+            return Err(HWIError::Device(String::from("No features found")));
         }
     }
 
-    async fn is_connected(&self) -> Result<(), Error> {
-        match self.client.lock().unwrap().ping("PINGPING")? {
-            TrezorResponse::Ok(_) => Ok(()),
-            _ => Err(Error::DeviceDisconnected),
-        }
-    }
-
-    async fn get_master_fingerprint(&self) -> Result<Fingerprint, Error> {
+    async fn get_master_fingerprint(&self) -> Result<Fingerprint, HWIError> {
         let path = DerivationPath::default();
         match self.client.lock().unwrap().get_public_key(
             &path,
@@ -140,15 +115,23 @@ impl HWI for TrezorClient {
                 let fp = key.fingerprint();
                 Ok(fp)
             }
-            Ok(TrezorResponse::Failure(f)) => Err(Error::Device(f.to_string())),
-            Ok(result) => Err(Error::Device(result.to_string())),
-            Err(e) => Err(Error::Device(e.to_string())),
+            Ok(TrezorResponse::Failure(f)) => Err(HWIError::Device(f.to_string())),
+            Ok(result) => Err(HWIError::Device(result.to_string())),
+            Err(e) => Err(HWIError::Device(e.to_string())),
         }
     }
 
-    async fn get_extended_pubkey(&self, path: &DerivationPath) -> Result<ExtendedPubKey, Error> {
+    async fn is_wallet_registered(&self, _name: &str, policy: &str) -> Result<bool, HWIError> {
+        return Err(HWIError::UnimplementedMethod);
+    }
+
+    async fn display_address(&self, script: &AddressScript) -> Result<(), HWIError> {
+        return Err(HWIError::UnimplementedMethod);
+    }
+
+    async fn get_extended_pubkey(&self, path: &DerivationPath) -> Result<Xpub, HWIError> {
         let path = DerivationPath::from_str(&path.to_string())
-            .map_err(|e| Error::Device(format!("{:?}", e)))?;
+            .map_err(|e| HWIError::Device(format!("{:?}", e)))?;
         match self.client.lock().unwrap().get_public_key(
             &path,
             trezor_client::InputScriptType::SPENDADDRESS,
@@ -156,24 +139,24 @@ impl HWI for TrezorClient {
             false,
         ) {
             Ok(TrezorResponse::Ok(key)) => return Ok(key),
-            Ok(TrezorResponse::Failure(f)) => Err(Error::Device(f.to_string())),
-            Ok(result) => Err(Error::Device(result.to_string())),
-            Err(e) => Err(Error::Device(e.to_string())),
+            Ok(TrezorResponse::Failure(f)) => Err(HWIError::Device(f.to_string())),
+            Ok(result) => Err(HWIError::Device(result.to_string())),
+            Err(e) => Err(HWIError::Device(e.to_string())),
         }
     }
 
-    async fn register_wallet(&self, _name: &str, _policy: &str) -> Result<Option<[u8; 32]>, Error> {
-        return Err(Error::UnimplementedMethod);
+    async fn register_wallet(&self, _name: &str, _policy: &str) -> Result<Option<[u8; 32]>, HWIError> {
+        return Err(HWIError::UnimplementedMethod);
     }
 
-    async fn sign_tx(&self, tx: &mut Psbt) -> Result<(), Error> {
+    async fn sign_tx(&self, tx: &mut Psbt) -> Result<(), HWIError> {
         let master_fp = self.get_master_fingerprint().await?;
         let mut signatures = HashMap::new();
         let mut client = self.client.lock().unwrap();
         let mut result = client.sign_tx(tx, self.network)?;
 
         // TODO: make this loop more elegant
-        // This could be done asynchrnously
+        // This could be done asynchronously
         loop {
             match result {
                 TrezorResponse::Ok(progress) => {
@@ -183,18 +166,18 @@ impl HWI for TrezorClient {
                         // TODO: add support for multisig
                         signature.push(0x01); // Signature type
                         if signatures.contains_key(&index) {
-                            return Err(Error::Device(format!(
+                            return Err(HWIError::Device(format!(
                                 "Signature for index {} already filled",
                                 index
                             )));
                         }
                         let val = ecdsa::Signature::from_slice(&signature)
-                            .map_err(|e| Error::Device(format!("{:?}", e)));
+                            .map_err(|e| HWIError::Device(format!("{:?}", e)));
                         signatures.insert(index, val?);
                     }
                     if progress.finished() {
                         for (index, input) in tx.inputs.iter_mut().enumerate() {
-                            let signature = signatures.remove(&index).ok_or(Error::Device(
+                            let signature = signatures.remove(&index).ok_or(HWIError::Device(
                                 format!("Signature for index {} not found", index),
                             ))?;
                             for (pk, (fp, _)) in input.bip32_derivation.iter() {
@@ -211,21 +194,21 @@ impl HWI for TrezorClient {
                     }
                 }
                 TrezorResponse::Failure(f) => {
-                    return Err(Error::Device(f.to_string()));
+                    return Err(HWIError::Device(f.to_string()));
                 }
                 TrezorResponse::ButtonRequest(req) => {
                     result = req.ack()?;
                 }
                 _ => {
-                    return Err(Error::Device(result.to_string()));
+                    return Err(HWIError::Device(result.to_string()));
                 }
             }
         }
     }
 }
 
-impl From<trezor_client::Error> for Error {
+impl From<trezor_client::Error> for HWIError {
     fn from(value: trezor_client::Error) -> Self {
-        Error::Device(format!("{:#?}", value))
+        HWIError::Device(format!("{:#?}", value))
     }
 }

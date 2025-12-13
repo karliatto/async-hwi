@@ -19,14 +19,13 @@ authors.workspace = true
 repository.workspace = true
 
 [features]
-default = ["ledger", "specter", "coldcard", "bitbox", "jade"]
+default = ["ledger", "specter", "coldcard", "bitbox", "jade", "trezor"]
 bitbox = ["tokio", "hidapi", "bitbox-api", "regex"]
 coldcard = ["dep:coldcard", "regex"]
-trezor = ["trezor-client"]
-default = ["ledger", "specter", "trezor"]
 specter = ["tokio", "tokio-serial", "serialport"]
 jade = ["tokio", "tokio-serial", "serde", "serde_bytes", "serde_cbor", "serialport", "reqwest"]
 ledger = ["regex", "tokio", "ledger_bitcoin_client", "ledger-transport-hidapi", "ledger-apdu", "hidapi"]
+trezor = ["trezor-client"]
 regex = ["dep:regex"]
 
 [dependencies]

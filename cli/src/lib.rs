@@ -5,6 +5,7 @@ pub mod command {
         jade::{self, Jade},
         ledger::{HidApi, Ledger, LedgerSimulator, TransportHID},
         specter::{Specter, SpecterSimulator},
+        trezor::TrezorClient,
         HWI,
     };
     use bitcoin::{hashes::hex::FromHex, Network};
@@ -21,6 +22,10 @@ pub mod command {
         wallet: Option<Wallet<'_>>,
     ) -> Result<Vec<Box<dyn HWI + Send>>, Box<dyn Error>> {
         let mut hws = Vec::new();
+
+        if let Ok(device) = TrezorClient::connect_first(false) {
+            hws.push(device.into());
+        }
 
         if let Ok(device) = SpecterSimulator::try_connect().await {
             hws.push(device.into());
