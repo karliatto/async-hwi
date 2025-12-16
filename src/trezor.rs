@@ -11,37 +11,20 @@ use bitcoin::{
     psbt::Psbt,
     PublicKey,
 };
-use trezor_client::{AvailableDevice, Trezor, TrezorResponse};
+use trezor_client::{AvailableDevice, Trezor, TrezorResponse, client::WalletPubKey};
 
-// TODO: probably this should be implemented in trezor-client
-#[derive(Debug, Clone)]
-pub struct Policy {
+#[derive(Debug)]
+struct WalletPolicy {
     name: String,
-    descriptor_template: String,
-    // TODO: right now we are using String, but we could change it to more specific extract_keys_and_template::<T>
-    keys: Vec<String>,
-}
-
-impl Policy {
-    fn new(name: String, descriptor_template: String, keys: Vec<String>) -> Self {
-        Self {
-            name,
-            descriptor_template,
-            keys,
-        }
-    }
-}
-
-#[derive(Default)]
-struct CommandOptions {
-    wallet: Option<(Policy, Option<[u8; 32]>)>,
+    policy: String,
+    hmac: [u8; 32],
 }
 
 pub struct TrezorClient {
     client: Arc<Mutex<Trezor>>,
     kind: DeviceKind,
     network: bitcoin::Network,
-    options: CommandOptions,
+    wallet: Option<WalletPolicy>,
 }
 
 impl From<TrezorClient> for Box<dyn HWI + Send> {
@@ -68,7 +51,7 @@ impl TrezorClient {
             client: Arc::new(Mutex::new(client)),
             kind,
             network: bitcoin::Network::Testnet,
-            options: CommandOptions::default(),
+            wallet: None,
         }
     }
 
@@ -80,13 +63,11 @@ impl TrezorClient {
 
     pub fn with_wallet(
         mut self,
-        name: &str,
-        policy: &str,
-        hmac: Option<[u8; 32]>,
+        name: String,
+        policy: String,
+        hmac: [u8; 32],
     ) -> Result<Self, HWIError> {
-        let (descriptor_template, keys) = utils::extract_keys_and_template::<String>(policy)?;
-        let policy = Policy::new(name.to_string(), descriptor_template, keys);
-        self.options.wallet = Some((policy, hmac));
+        self.wallet = Some(WalletPolicy { name, policy, hmac });
         Ok(self)
     }
 
@@ -169,12 +150,12 @@ impl HWI for TrezorClient {
                 index: _,
                 change: _,
             } => {
-                let (_policy, _hmac) = &self
-                    .options
+                let wallet = self
                     .wallet
                     .as_ref()
                     .ok_or_else(|| HWIError::MissingPolicy)?;
                 // TODO: client should be able to display the address
+                eprintln!("display_address: {:?}", wallet);
                 Ok(())
             }
         }
@@ -207,17 +188,18 @@ impl HWI for TrezorClient {
         let mut client = self.client.lock().unwrap();
         let mut result = client.register_policy(name.to_owned(), descriptor_template, primary, recovery, recovery_delay)?;
         loop {
-            return match result {
+            eprintln!("Trezor response: {:?}", result);
+            match result {
                 TrezorResponse::Ok(mac) => {
                     let mac: [u8; 32] = mac.unwrap_or_default().try_into().expect("incorrect HMAC size");
-                    Ok(Some(mac))
+                    return Ok(Some(mac))
                 }
-                TrezorResponse::Failure(f) => Err(HWIError::Device(f.to_string())),
+                TrezorResponse::Failure(f) => return Err(HWIError::Device(f.to_string())),
                 TrezorResponse::ButtonRequest(req) => {
                     result = req.ack()?;
                     continue;
                 }
-                result => Err(HWIError::Device(result.to_string())),
+                result => return Err(HWIError::Device(result.to_string())),
             }
         }
     }
