@@ -13,7 +13,7 @@ use bitcoin::{
     psbt::Psbt,
     PublicKey,
 };
-use trezor_client::{Trezor, TrezorResponse};
+use trezor_client::{AvailableDevice, Trezor, TrezorResponse};
 
 pub struct TrezorClient {
     client: Arc<Mutex<Trezor>>,
@@ -48,15 +48,14 @@ impl TrezorClient {
         }
     }
 
-    pub fn connect_first(debug: bool) -> Result<Self, HWIError> {
-        let mut devices = trezor_client::find_devices(debug);
-        if !devices.is_empty() {
-            let mut client = devices.remove(0).connect()?;
-            client.init_device(None)?;
-            Ok(Self::new(client))
-        } else {
-            Err(HWIError::DeviceNotFound)
-        }
+    pub fn connect(device: AvailableDevice) -> Result<Self, HWIError> {
+        let mut client = device.connect()?;
+        client.init_device(None)?;
+        Ok(Self::new(client))
+    }
+
+    pub fn find_devices() -> Vec<AvailableDevice> {
+        trezor_client::find_devices(false)
     }
 
     pub fn get_simulator() -> Trezor {
