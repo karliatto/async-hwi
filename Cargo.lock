@@ -2270,8 +2270,7 @@ dependencies = [
 [[package]]
 name = "trezor-client"
 version = "0.1.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "87873db279766278a7e56b01139943e00a45afc079fc8fa6651e949f2234c3f6"
+source = "git+https://github.com/trezor/trezor-firmware/?branch=ibz%2Fminiscript#beebac093f209c2e831ee33d816c8d96913a79bb"
 dependencies = [
  "bitcoin",
  "byteorder",
