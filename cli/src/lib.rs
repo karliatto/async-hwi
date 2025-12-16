@@ -23,8 +23,10 @@ pub mod command {
     ) -> Result<Vec<Box<dyn HWI + Send>>, Box<dyn Error>> {
         let mut hws = Vec::new();
 
-        if let Ok(device) = TrezorClient::connect_first(false) {
-            hws.push(device.into());
+        for device in TrezorClient::find_devices() {
+            if let Ok(device) = TrezorClient::connect(device) {
+                hws.push(device.into());
+            }
         }
 
         if let Ok(device) = SpecterSimulator::try_connect().await {
