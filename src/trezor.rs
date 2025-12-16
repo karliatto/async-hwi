@@ -44,7 +44,7 @@ impl TrezorClient {
         Self {
             client: Arc::new(Mutex::new(client)),
             kind,
-            network: bitcoin::Network::Testnet,
+            network: bitcoin::Network::Bitcoin,
         }
     }
 
