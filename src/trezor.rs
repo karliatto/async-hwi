@@ -1,9 +1,7 @@
-use crate::{AddressScript, DeviceKind, Error as HWIError, HWI};
+use crate::{AddressScript, DeviceKind, Error as HWIError, HWI, utils};
 
 use std::{
-    collections::HashMap,
-    str::FromStr,
-    sync::{Arc, Mutex},
+    collections::HashMap, convert::TryInto as _, str::FromStr, sync::{Arc, Mutex}
 };
 
 use async_trait::async_trait;
@@ -13,7 +11,7 @@ use bitcoin::{
     psbt::Psbt,
     PublicKey,
 };
-use trezor_client::{AvailableDevice, Trezor, TrezorResponse};
+use trezor_client::{AvailableDevice, Trezor, TrezorResponse, client::WalletPubKey};
 
 pub struct TrezorClient {
     client: Arc<Mutex<Trezor>>,
@@ -144,8 +142,30 @@ impl HWI for TrezorClient {
         }
     }
 
-    async fn register_wallet(&self, _name: &str, _policy: &str) -> Result<Option<[u8; 32]>, HWIError> {
-        return Err(HWIError::UnimplementedMethod);
+    async fn register_wallet(&self, name: &str, policy: &str) -> Result<Option<[u8; 32]>, HWIError> {
+        let (descriptor_template, keys) = utils::extract_keys_and_template::<WalletPubKey>(policy)?;
+        let mut keys = keys.into_iter();
+        let primary = keys.next().expect("no primary key");
+        let recovery = keys.next().expect("no recovery key");
+
+        eprintln!("descriptor_template: {}", descriptor_template);
+        let recovery_delay = 6;
+        let mut client = self.client.lock().unwrap();
+        let mut result = client.register_policy(name.to_owned(), descriptor_template, primary, recovery, recovery_delay)?;
+        loop {
+            return match result {
+                TrezorResponse::Ok(mac) => {
+                    let mac: [u8; 32] = mac.unwrap_or_default().try_into().expect("incorrect HMAC size");
+                    Ok(Some(mac))
+                }
+                TrezorResponse::Failure(f) => Err(HWIError::Device(f.to_string())),
+                TrezorResponse::ButtonRequest(req) => {
+                    result = req.ack()?;
+                    continue;
+                }
+                result => Err(HWIError::Device(result.to_string())),
+            }
+        }
     }
 
     async fn sign_tx(&self, tx: &mut Psbt) -> Result<(), HWIError> {

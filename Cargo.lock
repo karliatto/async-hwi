@@ -2270,7 +2270,7 @@ dependencies = [
 [[package]]
 name = "trezor-client"
 version = "0.1.5"
-source = "git+https://github.com/trezor/trezor-firmware/?branch=ibz%2Fminiscript#beebac093f209c2e831ee33d816c8d96913a79bb"
+source = "git+https://github.com/trezor/trezor-firmware/?branch=romanz%2Fminiscript#1c17397724feed3b3260ec3d2cc8968f58753376"
 dependencies = [
  "bitcoin",
  "byteorder",
