@@ -120,11 +120,11 @@ impl HWI for TrezorClient {
         }
     }
 
-    async fn is_wallet_registered(&self, _name: &str, policy: &str) -> Result<bool, HWIError> {
+    async fn is_wallet_registered(&self, _name: &str, _policy: &str) -> Result<bool, HWIError> {
         return Err(HWIError::UnimplementedMethod);
     }
 
-    async fn display_address(&self, script: &AddressScript) -> Result<(), HWIError> {
+    async fn display_address(&self, _script: &AddressScript) -> Result<(), HWIError> {
         return Err(HWIError::UnimplementedMethod);
     }
 
