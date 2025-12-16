@@ -1,7 +1,10 @@
-use crate::{AddressScript, DeviceKind, Error as HWIError, HWI, utils};
+use crate::{utils, AddressScript, DeviceKind, Error as HWIError, HWI};
 
 use std::{
-    collections::HashMap, convert::TryInto as _, str::FromStr, sync::{Arc, Mutex}
+    collections::HashMap,
+    convert::TryInto as _,
+    str::FromStr,
+    sync::{Arc, Mutex},
 };
 
 use async_trait::async_trait;
@@ -9,15 +12,25 @@ use bitcoin::{
     bip32::{DerivationPath, Fingerprint, Xpub},
     ecdsa,
     psbt::Psbt,
-    PublicKey,
+    Network, PublicKey,
 };
-use trezor_client::{AvailableDevice, Trezor, TrezorResponse, client::WalletPubKey};
+use trezor_client::{client::WalletPubKey, AvailableDevice, Trezor, TrezorResponse};
 
 #[derive(Debug)]
-struct WalletPolicy {
+pub struct WalletPolicy {
     name: String,
     policy: String,
     hmac: [u8; 32],
+}
+
+impl WalletPolicy {
+    pub fn new(name: &str, policy: &str, hmac: [u8; 32]) -> Self {
+        Self {
+            name: name.to_owned(),
+            policy: policy.to_owned(),
+            hmac,
+        }
+    }
 }
 
 pub struct TrezorClient {
@@ -61,13 +74,8 @@ impl TrezorClient {
         Ok(Self::new(client))
     }
 
-    pub fn with_wallet(
-        mut self,
-        name: String,
-        policy: String,
-        hmac: [u8; 32],
-    ) -> Result<Self, HWIError> {
-        self.wallet = Some(WalletPolicy { name, policy, hmac });
+    pub fn with_wallet(mut self, wallet: WalletPolicy) -> Result<Self, HWIError> {
+        self.wallet = Some(wallet);
         Ok(self)
     }
 
@@ -154,9 +162,37 @@ impl HWI for TrezorClient {
                     .wallet
                     .as_ref()
                     .ok_or_else(|| HWIError::MissingPolicy)?;
-                // TODO: client should be able to display the address
-                eprintln!("display_address: {:?}", wallet);
-                Ok(())
+
+                let (descriptor_template, keys) =
+                    utils::extract_keys_and_template::<WalletPubKey>(&wallet.policy)?;
+                let mut keys = keys.into_iter();
+                let primary = keys.next().expect("no primary key");
+                let recovery = keys.next().expect("no recovery key");
+
+                eprintln!("descriptor_template: {}", descriptor_template);
+                let recovery_delay = 6;
+                let mut client = self.client.lock().unwrap();
+                let mut result = client.get_policy_address(
+                    wallet.name.to_owned(),
+                    descriptor_template,
+                    primary,
+                    recovery,
+                    6,
+                    wallet.hmac.to_vec(),
+                    0,
+                    false,
+                    Network::Testnet,
+                    false,
+                )?;
+
+                match result {
+                    TrezorResponse::Ok(address) => {
+                        eprintln!("address: {}", address);
+                        Ok(())
+                    }
+                    TrezorResponse::Failure(f) => Err(HWIError::Device(f.to_string())),
+                    result => Err(HWIError::Device(result.to_string())),
+                }
             }
         }
     }
@@ -177,7 +213,11 @@ impl HWI for TrezorClient {
         }
     }
 
-    async fn register_wallet(&self, name: &str, policy: &str) -> Result<Option<[u8; 32]>, HWIError> {
+    async fn register_wallet(
+        &self,
+        name: &str,
+        policy: &str,
+    ) -> Result<Option<[u8; 32]>, HWIError> {
         let (descriptor_template, keys) = utils::extract_keys_and_template::<WalletPubKey>(policy)?;
         let mut keys = keys.into_iter();
         let primary = keys.next().expect("no primary key");
@@ -186,13 +226,22 @@ impl HWI for TrezorClient {
         eprintln!("descriptor_template: {}", descriptor_template);
         let recovery_delay = 6;
         let mut client = self.client.lock().unwrap();
-        let mut result = client.register_policy(name.to_owned(), descriptor_template, primary, recovery, recovery_delay)?;
+        let mut result = client.register_policy(
+            name.to_owned(),
+            descriptor_template,
+            primary,
+            recovery,
+            recovery_delay,
+        )?;
         loop {
             eprintln!("Trezor response: {:?}", result);
             match result {
                 TrezorResponse::Ok(mac) => {
-                    let mac: [u8; 32] = mac.unwrap_or_default().try_into().expect("incorrect HMAC size");
-                    return Ok(Some(mac))
+                    let mac: [u8; 32] = mac
+                        .unwrap_or_default()
+                        .try_into()
+                        .expect("incorrect HMAC size");
+                    return Ok(Some(mac));
                 }
                 TrezorResponse::Failure(f) => return Err(HWIError::Device(f.to_string())),
                 TrezorResponse::ButtonRequest(req) => {

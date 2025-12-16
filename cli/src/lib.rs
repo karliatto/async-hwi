@@ -5,7 +5,7 @@ pub mod command {
         jade::{self, Jade},
         ledger::{HidApi, Ledger, LedgerSimulator, TransportHID},
         specter::{Specter, SpecterSimulator},
-        trezor::TrezorClient,
+        trezor::{TrezorClient, WalletPolicy},
         HWI,
     };
     use bitcoin::{hashes::hex::FromHex, Network};
@@ -24,7 +24,23 @@ pub mod command {
         let mut hws = Vec::new();
 
         for device in TrezorClient::find_devices() {
-            if let Ok(device) = TrezorClient::connect(device) {
+            if let Ok(mut device) = TrezorClient::connect(device) {
+                if let Some(wallet) = wallet.as_ref() {
+                    let name = wallet
+                        .name
+                        .ok_or::<Box<dyn Error>>("Trezor requires a wallet name".into())?;
+                    let policy = wallet
+                        .policy
+                        .ok_or::<Box<dyn Error>>("Trezor requires a wallet policy".into())?;
+                    let hmac_hex = wallet
+                        .hmac
+                        .ok_or::<Box<dyn Error>>("Trezor requires a wallet hmac".into())?;
+                    let mut hmac = [b'\0'; 32];
+                    hmac.copy_from_slice(&Vec::from_hex(&hmac_hex)?);
+
+                    let wallet = WalletPolicy::new(name, &policy, hmac);
+                    device = device.with_wallet(wallet)?;
+                }
                 hws.push(device.into());
             }
         }
