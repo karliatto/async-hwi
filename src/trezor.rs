@@ -6,19 +6,45 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use crate::utils;
 use async_trait::async_trait;
 use bitcoin::{
-    bip32::{DerivationPath, Xpub, Fingerprint},
+    bip32::{DerivationPath, Fingerprint, Xpub},
     ecdsa,
     psbt::Psbt,
     PublicKey,
 };
 use trezor_client::{AvailableDevice, Trezor, TrezorResponse};
 
+// TODO: probably this should be implemented in trezor-client
+#[derive(Debug, Clone)]
+pub struct Policy {
+    name: String,
+    descriptor_template: String,
+    // TODO: right now we are using String, but we could change it to more specific extract_keys_and_template::<T>
+    keys: Vec<String>,
+}
+
+impl Policy {
+    fn new(name: String, descriptor_template: String, keys: Vec<String>) -> Self {
+        Self {
+            name,
+            descriptor_template,
+            keys,
+        }
+    }
+}
+
+#[derive(Default)]
+struct CommandOptions {
+    wallet: Option<(Policy, Option<[u8; 32]>)>,
+}
+
 pub struct TrezorClient {
     client: Arc<Mutex<Trezor>>,
     kind: DeviceKind,
     network: bitcoin::Network,
+    options: CommandOptions,
 }
 
 impl From<TrezorClient> for Box<dyn HWI + Send> {
@@ -45,6 +71,7 @@ impl TrezorClient {
             client: Arc::new(Mutex::new(client)),
             kind,
             network: bitcoin::Network::Testnet,
+            options: CommandOptions::default(),
         }
     }
 
@@ -52,6 +79,18 @@ impl TrezorClient {
         let mut client = device.connect()?;
         client.init_device(None)?;
         Ok(Self::new(client))
+    }
+
+    pub fn with_wallet(
+        mut self,
+        name: &str,
+        policy: &str,
+        hmac: Option<[u8; 32]>,
+    ) -> Result<Self, HWIError> {
+        let (descriptor_template, keys) = utils::extract_keys_and_template::<String>(policy)?;
+        let policy = Policy::new(name.to_string(), descriptor_template, keys);
+        self.options.wallet = Some((policy, hmac));
+        Ok(self)
     }
 
     pub fn find_devices() -> Vec<AvailableDevice> {
@@ -120,12 +159,28 @@ impl HWI for TrezorClient {
         }
     }
 
-    async fn is_wallet_registered(&self, _name: &str, _policy: &str) -> Result<bool, HWIError> {
+    async fn is_wallet_registered(&self, name: &str, policy: &str) -> Result<bool, HWIError> {
         return Err(HWIError::UnimplementedMethod);
     }
 
-    async fn display_address(&self, _script: &AddressScript) -> Result<(), HWIError> {
-        return Err(HWIError::UnimplementedMethod);
+    async fn display_address(&self, script: &AddressScript) -> Result<(), HWIError> {
+        match script {
+            AddressScript::P2TR(_path) => {
+                return Err(HWIError::UnimplementedMethod);
+            }
+            AddressScript::Miniscript {
+                index: _,
+                change: _,
+            } => {
+                let (_policy, _hmac) = &self
+                    .options
+                    .wallet
+                    .as_ref()
+                    .ok_or_else(|| HWIError::MissingPolicy)?;
+                // TODO: client should be able to display the address
+                Ok(())
+            }
+        }
     }
 
     async fn get_extended_pubkey(&self, path: &DerivationPath) -> Result<Xpub, HWIError> {
@@ -144,8 +199,15 @@ impl HWI for TrezorClient {
         }
     }
 
-    async fn register_wallet(&self, _name: &str, _policy: &str) -> Result<Option<[u8; 32]>, HWIError> {
-        return Err(HWIError::UnimplementedMethod);
+    async fn register_wallet(
+        &self,
+        _name: &str,
+        policy: &str,
+    ) -> Result<Option<[u8; 32]>, HWIError> {
+        let (_descriptor_template, _keys) = utils::extract_keys_and_template::<String>(policy)?;
+        // TODO: client should be able to register the wallet and return the hmac
+        let hmac = [0u8; 32]; // TODO: Dummy hmac for development
+        Ok(Some(hmac))
     }
 
     async fn sign_tx(&self, tx: &mut Psbt) -> Result<(), HWIError> {
