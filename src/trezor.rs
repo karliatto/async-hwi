@@ -179,17 +179,23 @@ impl HWI for TrezorClient {
                     *index,
                     *change,
                     Network::Testnet,
-                    false,
+                    true,
                 )?;
-
-                match result {
-                    TrezorResponse::Ok(address) => {
-                        eprintln!("address: {}", address);
-                        Ok(())
+                loop {
+                    match result {
+                        TrezorResponse::Ok(address) => {
+                            eprintln!("address: {}", address);
+                            return Ok(());
+                        }
+                        TrezorResponse::ButtonRequest(req) => {
+                            result = req.ack()?;
+                            continue;
+                        }
+                        TrezorResponse::Failure(f) => return Err(HWIError::Device(f.to_string())),
+                        result => return Err(HWIError::Device(result.to_string())),
                     }
-                    TrezorResponse::Failure(f) => Err(HWIError::Device(f.to_string())),
-                    result => Err(HWIError::Device(result.to_string())),
                 }
+
             }
         }
     }
@@ -231,7 +237,6 @@ impl HWI for TrezorClient {
             recovery_delay,
         )?;
         loop {
-            eprintln!("Trezor response: {:?}", result);
             match result {
                 TrezorResponse::Ok(mac) => {
                     let mac: [u8; 32] = mac
