@@ -220,10 +220,17 @@ impl HWI for TrezorClient {
     ) -> Result<Option<[u8; 32]>, HWIError> {
         let (descriptor_template, keys) = utils::extract_keys_and_template::<WalletPubKey>(policy)?;
         let mut keys = keys.into_iter();
-        let primary = keys.next().expect("no primary key");
-        let recovery = keys.next().expect("no recovery key");
-
-        eprintln!("descriptor_template: {}", descriptor_template);
+        let primary = keys.next().ok_or_else(|| HWIError::UnsupportedInput)?;
+        // If we have a policy where primary and recovery keys are the same then keys contains only one key
+        // so ideally we reuse it as recovery to satisfy `register_policy`.
+        let recovery = match keys.next() {
+            Some(k) => k,
+            None => {
+                let s = primary.to_string();
+                WalletPubKey::from_str(&s)
+                    .map_err(|e| HWIError::Device(format!("invalid WalletPubKey: {e}")))?
+            },
+        };
         let recovery_delay = 6;
         let mut client = self.client.lock().unwrap();
         let mut result = client.register_policy(
