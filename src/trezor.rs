@@ -154,10 +154,7 @@ impl HWI for TrezorClient {
             AddressScript::P2TR(_path) => {
                 return Err(HWIError::UnimplementedMethod);
             }
-            AddressScript::Miniscript {
-                index: _,
-                change: _,
-            } => {
+            AddressScript::Miniscript { index, change } => {
                 let wallet = self
                     .wallet
                     .as_ref()
@@ -170,17 +167,17 @@ impl HWI for TrezorClient {
                 let recovery = keys.next().expect("no recovery key");
 
                 eprintln!("descriptor_template: {}", descriptor_template);
-                let recovery_delay = 6;
+                let recovery_delay = 1;
                 let mut client = self.client.lock().unwrap();
                 let mut result = client.get_policy_address(
                     wallet.name.to_owned(),
                     descriptor_template,
                     primary,
                     recovery,
-                    6,
+                    recovery_delay,
                     wallet.hmac.to_vec(),
-                    0,
-                    false,
+                    *index,
+                    *change,
                     Network::Testnet,
                     false,
                 )?;
@@ -224,7 +221,7 @@ impl HWI for TrezorClient {
         let recovery = keys.next().expect("no recovery key");
 
         eprintln!("descriptor_template: {}", descriptor_template);
-        let recovery_delay = 6;
+        let recovery_delay = 1;
         let mut client = self.client.lock().unwrap();
         let mut result = client.register_policy(
             name.to_owned(),
